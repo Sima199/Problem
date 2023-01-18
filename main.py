@@ -1,108 +1,115 @@
-import discord
 import asyncio
-import time
-import itertools
+
+import discord
 from discord.ext import commands
+from discord import Colour
 from youtube_dl import YoutubeDL
-from discord.ext.commands import Bot
-import nacl
 import random
-from discord import FFmpegPCMAudio, player
+from asyncio.queues import Queue
 from discord.utils import get
 
 # DO NOT TOUCH
 
-songlist = []
 
-def embedding(text: str):
-  text= discord.Embed(
-  description=f"**{text}**",
-  color = 53380,
-  )
-  return(text)
-
-YDL_OPTIONS = {'format': 'worstaudio/best', 'noplaylist': 'False', 'simulate': 'True',
-               'preferredquality': '192', 'preferredcodec': 'mp3', 'key': 'FFmpegExtractAudio'}
-FFMPEG_OPTIONS = {'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5', 'options': '-vn'}
-
-config = {
-    'token': 'MTA1OTE2ODYyMDMyNTkwMDQwOA.GXW3yA.xaNbQM8TGa36MjbQNgmYBF7ZgltaE0sGaQ9HPQ',
-    'prefix': '$',
+YDL_OPTIONS = {
+    'format': 'worstaudio/best',
+    'noplaylist': 'False',
+    'simulate': 'True',
+    'preferredquality': '192',
+    'preferredcodec': 'mp3',
+    'key': 'FFmpegExtractAudio'
 }
+FFMPEG_OPTIONS = {
+    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
+    'options': '-vn'
+}
+API_TOKEN = 'MTA1OTE2ODYyMDMyNTkwMDQwOA.GXW3yA.xaNbQM8TGa36MjbQNgmYBF7ZgltaE0sGaQ9HPQ'
 
-def txt():
-    for i in range(0,1):
-        txt1 = 'Будет сделано'
-        txt2 = 'Ага'
-        txt = random.choices([txt1,txt2], weights=[50, 50])
-        i = i + 1
-        return txt
+OKS = [
+    'Будет сделано',
+    'Ага',
+    'Окей',
+    'Угу',
+    'Понятненько',
+]
+
+
+def ok():
+    return random.choice(OKS)
+
+
+def embedding(text: str, color=Colour.blue()):
+    return discord.Embed(
+        description=f"**{text}**",
+        color=color,
+    )
+
 
 # I N T E N T S
-intents = discord.Intents(messages = True, guilds = True)
-intents.guild_messages = True
-intents.members = True
-intents.message_content = True
-intents.voice_states = True
-intents.emojis_and_stickers = True
-all_intents = intents.all()
-all_intents= True
+intents = discord.Intents(
+    messages=True,
+    guilds=True,
+    guild_messages=True,
+    members=True,
+    message_content=True,
+    voice_states=True,
+    emojis_and_stickers=True,
+)
 
-bot = commands.Bot(command_prefix=config['prefix'], intents = intents)
+bot = commands.Bot(command_prefix='$', intents=intents)
 
-    # C O M M A N D S
+# C O M M A N D S
+
+
+playlist = Queue()
+
+
+def run_playlist(voice_client):
+    async def loop():
+        # тут мы просто ждем очередной трек из очереди и проигрываем его
+        while True:
+            next_song = await playlist.get()
+            voice_client.play(
+                discord.FFmpegPCMAudio(
+                    source=next_song,
+                    **FFMPEG_OPTIONS
+                ))
+
+    return loop
 
 
 # M U S I C A L
 
 
+def is_url(text: str):
+    return text.strip().startswith('https://')
+
+
+def get_song_url(song_title):
+    if not is_url(song_title):
+        song_title = f"ytsearch:{song_title}"
+    with YoutubeDL(YDL_OPTIONS) as ydl:
+        info = ydl.extract_info(song_title, download=False)
+    return info['formats'][0]['url']
+
 
 @bot.command()
-async def play(ctx, *, arg):
-    SuccText = embedding(txt()) #Текст при выполнении команды
-    FailText = embedding('Уже') #Текст при выполнении команды
+async def play(ctx, *, song_title):
+    voice = get(bot.voice_clients, guild=ctx.guild)
+    if not voice.is_connected():
+        ctx.send(embedding("Бот не подключен к голосовому чату", Colour.red()))
+        return
 
-    voice_client = ctx.guild.voice_client
-    try: #Заход в канал
-        vc = await ctx.message.author.voice.channel.connect(self_deaf=True) #подключение к каналу
-        if voice_client == None: #понятия не имею, я это украл и все заработало
-
-            await ctx.send(embed=SuccText) #Успешное выполнение всех условий выше
-            with YoutubeDL(YDL_OPTIONS) as ydl:
-                if 'https://' in arg: #поиск в случае если трек запросили через ссылку
-                    info = ydl.extract_info(arg, download=False)
-                else: #поиск в случае если трек запросили через название трека
-                    info = ydl.extract_info(f"ytsearch:{arg}", download=False)['entries'][0]
-
-            url = info['formats'][0]['url']
-            vc.play(discord.FFmpegPCMAudio(executable="ffmpeg", source=url, **FFMPEG_OPTIONS)) #проигрывание трека
-
-
-    except discord.ClientException: # случай если бот уже в канале
-
-        songlist.put(arg)
-
-        if 'https://' in songlist:
-
-            info = ydl.extract_info(songlist, download=False)
-
-        else:
-
-            info = ydl.extract_info(f"ytsearch:{songlist}", download=False)['entries'][0]
-
-        urlnext = info['formats'][0]['url']
-
-        vc.play(discord.FFmpegPCMAudio(executable="ffmpeg", source=urlnext, **FFMPEG_OPTIONS))
-
-        songlist.get()
-
-        await ctx.send(embed=FailText) #для проверки, что все работает
+    next_song = get_song_url(song_title)
+    await playlist.put(next_song)
+    ctx.send(embedding(ok(), Colour.green()))
 
 
 @bot.command()
 async def stop(ctx):
     voice_client = ctx.guild.voice_client
     await voice_client.disconnect()
+
 
 @bot.command()
 async def join(ctx):
@@ -112,10 +119,17 @@ async def join(ctx):
         await voice.move_to(channel)
     else:
         voice = await channel.connect()
+    # тут мы запускаем в бэкграунде проигрывание треков их очереди
+    asyncio.create_task(
+        run_playlist(voice)
+    )
+
+
 
 @bot.command()
 async def pause(ctx):
     await ctx.voice_client.pause()
+
 
 @bot.command()
 async def resume(ctx):
@@ -123,17 +137,20 @@ async def resume(ctx):
 
     # E T C
 
+
 # S H I T/T E S T
 
 @bot.command()
 async def boom(ctx):
     await ctx.reply('boom', file=discord.File('boom.webp'))
 
+
 # K I C K FROM SERVER
 
 @bot.command()
 async def kick(ctx, member: discord.Member):
- await member.kick()
+    await member.kick()
+
 
 # K I C K FROM VOICE
 
@@ -144,6 +161,7 @@ async def kickvc(ctx, member: discord.Member):
     else:
         await ctx.send(embed="Нет такого чубрика в голосовом")
 
+
 # C L E A R LAST "N" MESSAGES
 
 @bot.command()
@@ -153,7 +171,7 @@ async def clear(ctx, amount):
             if int(amount) < 10:
                 await ctx.channel.purge(limit=int(amount))
                 if int(amount) < 5:
-                    text = embedding("Последние "+ str(amount) +" сообщения съебались в ужасе")
+                    text = embedding("Последние " + str(amount) + " сообщения съебались в ужасе")
                     await ctx.send(embed=text, delete_after=10.0)
                 else:
                     text = embedding("Последние " + str(amount) + " сообщений съебались в ужасе")
@@ -172,4 +190,4 @@ async def clear(ctx, amount):
 
 # R U N N I N G
 
-bot.run(config['token'])
+bot.run(API_TOKEN)
