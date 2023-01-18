@@ -55,7 +55,6 @@ bot = commands.Bot(command_prefix=config['prefix'], intents = intents)
 
 # M U S I C A L
 
-"Записывает в массив, берет из массива. Если трек .is_playing, то ждет окончания и начинает воспроизводить."
 
 
 @bot.command()
